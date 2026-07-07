@@ -40,7 +40,7 @@ Start the backend you want to test.
 Standalone LangGraph app:
 
 ```bash
-cd ../python-langchain
+cd ../python-langgraph
 uv run uvicorn api:app --port 8001
 ```
 
@@ -67,7 +67,7 @@ uv run worker.py
 Temporal + LangGraph workflow gateway:
 
 ```bash
-cd ../python-langchain-temporal
+cd ../python-langgraph-temporal
 uv run uvicorn api:app --port 8002
 ```
 
@@ -80,7 +80,7 @@ temporal server start-dev --ui-port 8233
 ```
 
 ```bash
-cd ../python-langchain-temporal
+cd ../python-langgraph-temporal
 uv run worker.py
 ```
 

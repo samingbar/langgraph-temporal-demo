@@ -26,14 +26,14 @@ temporal server start-dev --ui-port 8233
 Start the Temporal + LangGraph worker:
 
 ```bash
-cd python-langchain-temporal
+cd python-langgraph-temporal
 uv run worker.py
 ```
 
 Start the HTTP API:
 
 ```bash
-cd python-langchain-temporal
+cd python-langgraph-temporal
 uv run uvicorn api:app --port 8002
 ```
 

@@ -11,7 +11,7 @@ From this folder:
 ```bash
 cd ..
 docker compose up -d
-cd python-langchain
+cd python-langgraph
 uv run starter.py
 ```
 
@@ -20,7 +20,7 @@ For the HTTP API:
 ```bash
 cd ..
 docker compose up -d
-cd python-langchain
+cd python-langgraph
 uv run uvicorn api:app --port 8001
 ```
 
