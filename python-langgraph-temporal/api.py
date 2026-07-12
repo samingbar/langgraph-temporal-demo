@@ -3,14 +3,12 @@
 Each endpoint is one Temporal client call. The workflow ID is the conversation
 ID, so the gateway can stay stateless.
 
-    uv run uvicorn api:app --port 8002
+    uv run python -m uvicorn api:app --port 8002
 """
 
-import re
-import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -18,6 +16,7 @@ from temporalio.client import Client, WorkflowUpdateFailedError
 from temporalio.service import RPCError, RPCStatusCode
 
 import config
+from support_agent_common.conversations import new_conversation_id
 from models.types import ApprovalDecision
 from workflows.agent import SupportAgentWorkflow
 
@@ -30,7 +29,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="support-agent Temporal LangGraph gateway", lifespan=lifespan)
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=config.CORS_ALLOW_ORIGINS,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -48,6 +50,7 @@ class SendMessage(BaseModel):
 
 
 class Approve(BaseModel):
+    approvalId: str
     approved: bool
     reason: str | None = None
 
@@ -66,6 +69,21 @@ def _not_found(e: RPCError):
     raise e
 
 
+def _authorized(request: Request) -> bool:
+    if config.DEMO_AUTH_DISABLED or not config.DEMO_ACCESS_TOKEN:
+        return True
+    token = request.headers.get("x-demo-token")
+    if token == config.DEMO_ACCESS_TOKEN:
+        return True
+    authorization = request.headers.get("authorization", "")
+    return authorization == f"Bearer {config.DEMO_ACCESS_TOKEN}"
+
+
+def require_demo_access(request: Request) -> None:
+    if not _authorized(request):
+        raise HTTPException(status_code=401, detail="demo access token required")
+
+
 @app.get("/")
 async def root():
     return {
@@ -82,10 +100,16 @@ async def root():
     }
 
 
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
+
+
 @app.post("/conversations", status_code=201)
-async def create_conversation(body: CreateConversation):
-    slug = re.sub(r"[^a-z0-9]+", "-", body.customerEmail.lower()).strip("-")
-    conversation_id = f"support-{slug}-{secrets.token_hex(2)}"
+async def create_conversation(
+    body: CreateConversation, _access: None = Depends(require_demo_access)
+):
+    conversation_id = new_conversation_id(body.customerEmail)
     await _client().start_workflow(
         SupportAgentWorkflow.run,
         body.customerEmail,
@@ -96,7 +120,11 @@ async def create_conversation(body: CreateConversation):
 
 
 @app.post("/conversations/{conversation_id}/messages")
-async def send_message(conversation_id: str, body: SendMessage):
+async def send_message(
+    conversation_id: str,
+    body: SendMessage,
+    _access: None = Depends(require_demo_access),
+):
     try:
         result = await _handle(conversation_id).execute_update(
             SupportAgentWorkflow.send_message, body.text
@@ -110,7 +138,9 @@ async def send_message(conversation_id: str, body: SendMessage):
 
 
 @app.get("/conversations/{conversation_id}/transcript")
-async def transcript(conversation_id: str):
+async def transcript(
+    conversation_id: str, _access: None = Depends(require_demo_access)
+):
     try:
         messages = await _handle(conversation_id).query(SupportAgentWorkflow.transcript)
     except RPCError as e:
@@ -119,7 +149,9 @@ async def transcript(conversation_id: str):
 
 
 @app.get("/conversations/{conversation_id}/pending-approval")
-async def pending_approval(conversation_id: str):
+async def pending_approval(
+    conversation_id: str, _access: None = Depends(require_demo_access)
+):
     try:
         pending = await _handle(conversation_id).query(
             SupportAgentWorkflow.pending_approval
@@ -130,6 +162,7 @@ async def pending_approval(conversation_id: str):
         return {"pending": None}
     return {
         "pending": {
+            "approvalId": pending.approval_id,
             "trackIds": pending.track_ids,
             "description": pending.description,
         }
@@ -137,16 +170,21 @@ async def pending_approval(conversation_id: str):
 
 
 @app.post("/conversations/{conversation_id}/approve", status_code=202)
-async def approve(conversation_id: str, body: Approve):
+async def approve(
+    conversation_id: str,
+    body: Approve,
+    _access: None = Depends(require_demo_access),
+):
     handle = _handle(conversation_id)
     try:
-        pending = await handle.query(SupportAgentWorkflow.pending_approval)
-        if pending is None:
-            raise HTTPException(status_code=409, detail="nothing pending")
-        await handle.signal(
+        await handle.execute_update(
             SupportAgentWorkflow.approve_purchase,
+            body.approvalId,
             ApprovalDecision(approved=body.approved, reason=body.reason),
         )
+    except WorkflowUpdateFailedError as e:
+        detail = getattr(e.cause, "message", None) or str(e.cause)
+        raise HTTPException(status_code=409, detail=detail) from e
     except RPCError as e:
         _not_found(e)
     return {}

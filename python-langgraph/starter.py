@@ -26,7 +26,11 @@ async def main() -> None:
             description = pending.description if pending else "purchase"
             answer = input(f"approve {description}? [Y/n] ").strip().lower()
             approved = answer not in {"n", "no", "reject"}
-            result = await session.approve_purchase(ApprovalDecision(approved=approved))
+            if pending is None:
+                raise RuntimeError("purchase approval disappeared")
+            result = await session.approve_purchase(
+                pending.approval_id, ApprovalDecision(approved=approved)
+            )
             print(f"agent> {result.reply}")
 
 

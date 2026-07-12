@@ -54,6 +54,7 @@ class SupportAgentWorkflow:
                 for call in plan_response.message.tool_calls:
                     if call.name == "purchase_tracks":
                         self.pending_purchase = PendingPurchase(
+                            approval_id=f"{call.id}:{len(self.messages)}",
                             track_ids=call.args.get("track_ids", []),
                             description=call.args.get("summary"),
                         )
@@ -89,6 +90,12 @@ class SupportAgentWorkflow:
     async def send_message(self, text: str) -> TurnResult:
         """One chat turn: append the message, wake the loop, wait until the
         turn settles — a final reply OR parked on a purchase approval."""
+        if self.turn_in_progress:
+            await workflow.wait_condition(
+                lambda: not self.turn_in_progress or self.pending_purchase is not None
+            )
+        if self.pending_purchase is not None:
+            raise RuntimeError("purchase approval is still pending")
         turn_start = len(self.messages)
         self.messages.append(ChatMessage(role="user", content=text))
         self.turn_in_progress = True
@@ -100,8 +107,14 @@ class SupportAgentWorkflow:
             return TurnResult(status="awaiting_approval", reply=reply)
         return TurnResult(status="reply", reply=reply)
 
-    @workflow.signal
-    def approve_purchase(self, decision: ApprovalDecision) -> None:
+    @workflow.update
+    def approve_purchase(
+        self, approval_id: str, decision: ApprovalDecision
+    ) -> None:
+        if self.pending_purchase is None:
+            raise RuntimeError("nothing pending")
+        if self.pending_purchase.approval_id != approval_id:
+            raise RuntimeError("approval request is stale")
         self.approval = decision
 
     @workflow.query

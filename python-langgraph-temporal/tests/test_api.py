@@ -1,0 +1,48 @@
+import unittest
+from unittest.mock import patch
+
+import api
+from models.types import PendingPurchase
+
+
+class FakeHandle:
+    def __init__(self) -> None:
+        self.update_calls = []
+
+    async def query(self, _query):
+        return PendingPurchase(
+            approval_id="approval-123", track_ids=[3], description="A track"
+        )
+
+    async def execute_update(self, *args):
+        self.update_calls.append(args)
+
+
+class ApiApprovalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pending_approval_includes_opaque_approval_id(self) -> None:
+        handle = FakeHandle()
+        with patch.object(api, "_handle", return_value=handle):
+            response = await api.pending_approval("conversation")
+
+        self.assertEqual(
+            response,
+            {
+                "pending": {
+                    "approvalId": "approval-123",
+                    "trackIds": [3],
+                    "description": "A track",
+                }
+            },
+        )
+
+    async def test_approval_uses_one_atomic_workflow_update(self) -> None:
+        handle = FakeHandle()
+        body = api.Approve(approvalId="approval-123", approved=True)
+        with patch.object(api, "_handle", return_value=handle):
+            response = await api.approve("conversation", body)
+
+        self.assertEqual(response, {})
+        self.assertEqual(len(handle.update_calls), 1)
+        _, approval_id, decision = handle.update_calls[0]
+        self.assertEqual(approval_id, "approval-123")
+        self.assertTrue(decision.approved)

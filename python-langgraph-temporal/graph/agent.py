@@ -68,6 +68,7 @@ def execute_tools(state: AgentState) -> dict:
                 **update,
                 "messages": messages,
                 "pending_purchase": PendingPurchase(
+                    approval_id=f"{call.id}:{len(messages)}",
                     track_ids=call.args.get("track_ids", []),
                     description=call.args.get("summary"),
                 ),

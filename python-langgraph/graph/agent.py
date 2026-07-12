@@ -31,6 +31,10 @@ class NoPendingApprovalError(RuntimeError):
     pass
 
 
+class StaleApprovalError(RuntimeError):
+    pass
+
+
 class AgentState(TypedDict):
     customer_email: str
     messages: list[ChatMessage]
@@ -79,6 +83,7 @@ def _execute_tools(state: AgentState) -> dict:
                 **update,
                 "messages": messages,
                 "pending_purchase": PendingPurchase(
+                    approval_id=f"{call.id}:{len(messages)}",
                     track_ids=call.args.get("track_ids", []),
                     description=call.args.get("summary"),
                 ),
@@ -156,10 +161,15 @@ class SupportAgentSession:
             )
             return self._turn_result(turn_start)
 
-    async def approve_purchase(self, decision: ApprovalDecision) -> TurnResult:
+    async def approve_purchase(
+        self, approval_id: str, decision: ApprovalDecision
+    ) -> TurnResult:
         async with self._lock:
-            if self._state["pending_purchase"] is None:
+            pending = self._state["pending_purchase"]
+            if pending is None:
                 raise NoPendingApprovalError("nothing pending")
+            if pending.approval_id != approval_id:
+                raise StaleApprovalError("approval request is stale")
 
             turn_start = len(self._state["messages"])
             self._state = await self._graph.ainvoke(

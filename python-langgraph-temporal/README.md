@@ -27,14 +27,14 @@ Start the Temporal + LangGraph worker:
 
 ```bash
 cd python-langgraph-temporal
-uv run worker.py
+uv run python worker.py
 ```
 
 Start the HTTP API:
 
 ```bash
 cd python-langgraph-temporal
-uv run uvicorn api:app --port 8002
+uv run python -m uvicorn api:app --port 8002
 ```
 
 Point the web UI at the `temporal-langgraph` backend preset, or open:
@@ -49,7 +49,7 @@ Use the same repo-root `.env` values as the original demo:
 
 - `TEMPORAL_ADDRESS`
 - `TEMPORAL_NAMESPACE`
-- `TEMPORAL_API_KEY`, `TEMPORAL_TLS_CERT`, `TEMPORAL_TLS_KEY` for Temporal Cloud
+- `TEMPORAL_API_KEY`, `TEMPORAL_TLS`, `TEMPORAL_TLS_CERT`, `TEMPORAL_TLS_KEY` for Temporal Cloud
 - `LANGGRAPH_TEMPORAL_TASK_QUEUE` to override the default task queue
 - `DB_URL`
 - `LLM_PROVIDER=anthropic` or `LLM_PROVIDER=openai`
@@ -57,12 +57,59 @@ Use the same repo-root `.env` values as the original demo:
 - `ANTHROPIC_MODEL`
 - `OPENAI_MODEL`
 - `OPENAI_FAILURE_RATE` to simulate retryable OpenAI planning failures
+- `PORT` for the HTTP API container/listener
+- `CORS_ALLOW_ORIGINS` as a comma-separated list for browser clients
+- `DEMO_ACCESS_TOKEN` to require `X-Demo-Token` or `Authorization: Bearer`
+  on conversation endpoints in public deployments
+- `DEMO_AUTH_REQUIRED=true` to fail startup when the public-demo token is absent
 
 Default task queue:
 
 ```text
 support-agent-temporal-langgraph
 ```
+
+## Public Demo Access Gate
+
+Set `DEMO_ACCESS_TOKEN` and `DEMO_AUTH_REQUIRED=true` in deployed environments. The API will reject
+conversation endpoints with `401` unless the request includes either:
+
+```text
+X-Demo-Token: <token>
+Authorization: Bearer <token>
+```
+
+The web UI sends this token when opened with:
+
+```text
+?token=<token>
+```
+
+The UI immediately removes the token from the address bar and stores it only for
+the active browser session. Leave both settings unset for local development only.
+
+## Docker Images
+
+Build the shared API/worker image from the repository root:
+
+```bash
+docker build -f docker/backend.Dockerfile -t langgraph-temporal-demo-backend .
+```
+
+Run the API:
+
+```bash
+docker run --rm -p 8002:8002 --env-file .env langgraph-temporal-demo-backend
+```
+
+Run the worker with the same image:
+
+```bash
+docker run --rm --env-file .env langgraph-temporal-demo-backend python worker.py
+```
+
+For production, set `TEMPORAL_ADDRESS` and `DB_URL` to routable service or
+managed endpoints. Do not use `localhost` in demo cloud deployment config.
 
 ## Docker Operations
 
@@ -121,11 +168,18 @@ Activity failures.
 Fail 20% of OpenAI planning calls:
 
 ```bash
-LLM_PROVIDER=openai OPENAI_FAILURE_RATE=0.2 uv run worker.py
+LLM_PROVIDER=openai OPENAI_FAILURE_RATE=0.2 uv run python worker.py
 ```
 
 Disable simulated failures:
 
 ```bash
-OPENAI_FAILURE_RATE=0 uv run worker.py
+OPENAI_FAILURE_RATE=0 uv run python worker.py
 ```
+
+## Demo Cloud Registry
+
+This folder is the app source for the Temporal + LangGraph demo. Demo cloud
+onboarding should add a registry YAML under
+`tmprl-demo-cloud-registry/projects/demo`; do not move this source into the
+registry repository. Instruqt is not required for this deployment path.

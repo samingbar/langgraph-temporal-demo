@@ -9,11 +9,11 @@
 #
 # Logs live in /tmp/agent-*.log
 
-ORIGINAL_API_PORT := 8000
-LANGGRAPH_API_PORT := 8001
-TEMPORAL_LANGGRAPH_API_PORT := 8002
-WEB_PORT := 5173
-TEMPORAL_UI_PORT := 8233
+ORIGINAL_API_PORT ?= 8000
+LANGGRAPH_API_PORT ?= 8001
+TEMPORAL_LANGGRAPH_API_PORT ?= 8002
+WEB_PORT ?= 5173
+TEMPORAL_UI_PORT ?= 8233
 
 TEMPORAL_PID := /tmp/agent-temporal.pid
 ORIGINAL_WORKER_PID := /tmp/agent-worker.pid
@@ -31,12 +31,20 @@ TEMPORAL_LANGGRAPH_WORKER_LOG := /tmp/agent-temporal-langgraph-worker.log
 TEMPORAL_LANGGRAPH_API_LOG := /tmp/agent-temporal-langgraph-api.log
 WEB_LOG := /tmp/agent-web.log
 
-.PHONY: up original langgraph temporal-langgraph down status logs \
+.PHONY: up original langgraph temporal-langgraph down status logs test \
 	postgres temporal worker api langgraph-api temporal-langgraph-worker \
 	temporal-langgraph-api web kill-worker kill-temporal-langgraph-worker \
 	kill-langgraph-api kill-workers kill-db db
 
-up: postgres temporal worker api langgraph-api temporal-langgraph-worker temporal-langgraph-api web
+up:
+	@$(MAKE) --no-print-directory postgres
+	@$(MAKE) --no-print-directory temporal
+	@$(MAKE) --no-print-directory worker
+	@$(MAKE) --no-print-directory api
+	@$(MAKE) --no-print-directory langgraph-api
+	@$(MAKE) --no-print-directory temporal-langgraph-worker
+	@$(MAKE) --no-print-directory temporal-langgraph-api
+	@$(MAKE) --no-print-directory web
 	@echo ""
 	@echo "  chat UI                    -> http://localhost:$(WEB_PORT)"
 	@echo "  temporal UI                -> http://localhost:$(TEMPORAL_UI_PORT)"
@@ -69,7 +77,7 @@ worker:
 	@if [ -s "$(ORIGINAL_WORKER_PID)" ] && kill -0 "$$(cat "$(ORIGINAL_WORKER_PID)")" 2>/dev/null; then \
 		echo "original Temporal worker already running"; \
 	else \
-		(nohup sh -c 'cd python && exec uv run worker.py' > "$(ORIGINAL_WORKER_LOG)" 2>&1 & echo $$! > "$(ORIGINAL_WORKER_PID)"); \
+		(nohup sh -c 'cd python && exec uv run python worker.py' > "$(ORIGINAL_WORKER_LOG)" 2>&1 & echo $$! > "$(ORIGINAL_WORKER_PID)"); \
 		echo "original Temporal worker started"; \
 	fi
 
@@ -77,7 +85,7 @@ api:
 	@if [ -s "$(ORIGINAL_API_PID)" ] && kill -0 "$$(cat "$(ORIGINAL_API_PID)")" 2>/dev/null; then \
 		echo "original Temporal gateway already running (:$(ORIGINAL_API_PORT))"; \
 	else \
-		(nohup sh -c 'cd python && exec uv run uvicorn api:app --port $(ORIGINAL_API_PORT)' > "$(ORIGINAL_API_LOG)" 2>&1 & echo $$! > "$(ORIGINAL_API_PID)"); \
+		(nohup sh -c 'cd python && exec uv run python -m uvicorn api:app --port $(ORIGINAL_API_PORT)' > "$(ORIGINAL_API_LOG)" 2>&1 & echo $$! > "$(ORIGINAL_API_PID)"); \
 		echo "original Temporal gateway started (:$(ORIGINAL_API_PORT))"; \
 	fi
 
@@ -85,7 +93,7 @@ langgraph-api:
 	@if [ -s "$(LANGGRAPH_API_PID)" ] && kill -0 "$$(cat "$(LANGGRAPH_API_PID)")" 2>/dev/null; then \
 		echo "standalone LangGraph gateway already running (:$(LANGGRAPH_API_PORT))"; \
 	else \
-		(nohup sh -c 'cd python-langgraph && exec uv run uvicorn api:app --port $(LANGGRAPH_API_PORT)' > "$(LANGGRAPH_API_LOG)" 2>&1 & echo $$! > "$(LANGGRAPH_API_PID)"); \
+		(nohup sh -c 'cd python-langgraph && exec uv run python -m uvicorn api:app --port $(LANGGRAPH_API_PORT)' > "$(LANGGRAPH_API_LOG)" 2>&1 & echo $$! > "$(LANGGRAPH_API_PID)"); \
 		echo "standalone LangGraph gateway started (:$(LANGGRAPH_API_PORT))"; \
 	fi
 
@@ -93,7 +101,7 @@ temporal-langgraph-worker:
 	@if [ -s "$(TEMPORAL_LANGGRAPH_WORKER_PID)" ] && kill -0 "$$(cat "$(TEMPORAL_LANGGRAPH_WORKER_PID)")" 2>/dev/null; then \
 		echo "Temporal + LangGraph worker already running"; \
 	else \
-		(nohup sh -c 'cd python-langgraph-temporal && exec uv run worker.py' > "$(TEMPORAL_LANGGRAPH_WORKER_LOG)" 2>&1 & echo $$! > "$(TEMPORAL_LANGGRAPH_WORKER_PID)"); \
+		(nohup sh -c 'cd python-langgraph-temporal && exec uv run python worker.py' > "$(TEMPORAL_LANGGRAPH_WORKER_LOG)" 2>&1 & echo $$! > "$(TEMPORAL_LANGGRAPH_WORKER_PID)"); \
 		echo "Temporal + LangGraph worker started"; \
 	fi
 
@@ -101,7 +109,7 @@ temporal-langgraph-api:
 	@if [ -s "$(TEMPORAL_LANGGRAPH_API_PID)" ] && kill -0 "$$(cat "$(TEMPORAL_LANGGRAPH_API_PID)")" 2>/dev/null; then \
 		echo "Temporal + LangGraph gateway already running (:$(TEMPORAL_LANGGRAPH_API_PORT))"; \
 	else \
-		(nohup sh -c 'cd python-langgraph-temporal && exec uv run uvicorn api:app --port $(TEMPORAL_LANGGRAPH_API_PORT)' > "$(TEMPORAL_LANGGRAPH_API_LOG)" 2>&1 & echo $$! > "$(TEMPORAL_LANGGRAPH_API_PID)"); \
+		(nohup sh -c 'cd python-langgraph-temporal && exec uv run python -m uvicorn api:app --port $(TEMPORAL_LANGGRAPH_API_PORT)' > "$(TEMPORAL_LANGGRAPH_API_LOG)" 2>&1 & echo $$! > "$(TEMPORAL_LANGGRAPH_API_PID)"); \
 		echo "Temporal + LangGraph gateway started (:$(TEMPORAL_LANGGRAPH_API_PORT))"; \
 	fi
 
@@ -168,3 +176,9 @@ logs:
 	-@tail -n 20 "$(TEMPORAL_LOG)" "$(ORIGINAL_WORKER_LOG)" "$(ORIGINAL_API_LOG)" \
 		"$(LANGGRAPH_API_LOG)" "$(TEMPORAL_LANGGRAPH_WORKER_LOG)" \
 		"$(TEMPORAL_LANGGRAPH_API_LOG)" "$(WEB_LOG)" 2>/dev/null
+
+test:
+
+	@cd python && uv run --frozen python -m unittest discover -s tests
+	@cd python-langgraph && uv run --frozen python -m unittest discover -s tests
+	@cd python-langgraph-temporal && uv run --frozen python -m unittest discover -s tests

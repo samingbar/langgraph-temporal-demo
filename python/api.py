@@ -5,8 +5,6 @@ serve any conversation.
     uv run uvicorn api:app --port 8000
 """
 
-import re
-import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -17,6 +15,7 @@ from temporalio.client import Client, WorkflowUpdateFailedError
 from temporalio.service import RPCError, RPCStatusCode
 
 import config
+from support_agent_common.conversations import new_conversation_id
 from models.types import ApprovalDecision
 from workflows.agent import SupportAgentWorkflow
 
@@ -48,6 +47,7 @@ class SendMessage(BaseModel):
 
 
 class Approve(BaseModel):
+    approvalId: str
     approved: bool
     reason: str | None = None
 
@@ -83,8 +83,7 @@ async def root():
 
 @app.post("/conversations", status_code=201)
 async def create_conversation(body: CreateConversation):
-    slug = re.sub(r"[^a-z0-9]+", "-", body.customerEmail.lower()).strip("-")
-    conversation_id = f"support-{slug}-{secrets.token_hex(2)}"
+    conversation_id = new_conversation_id(body.customerEmail)
     await _client().start_workflow(
         SupportAgentWorkflow.run,
         body.customerEmail,
@@ -126,20 +125,27 @@ async def pending_approval(conversation_id: str):
         _not_found(e)
     if pending is None:
         return {"pending": None}
-    return {"pending": {"trackIds": pending.track_ids, "description": pending.description}}
+    return {
+        "pending": {
+            "approvalId": pending.approval_id,
+            "trackIds": pending.track_ids,
+            "description": pending.description,
+        }
+    }
 
 
 @app.post("/conversations/{conversation_id}/approve", status_code=202)
 async def approve(conversation_id: str, body: Approve):
     handle = _handle(conversation_id)
     try:
-        pending = await handle.query(SupportAgentWorkflow.pending_approval)
-        if pending is None:
-            raise HTTPException(status_code=409, detail="nothing pending")
-        await handle.signal(
+        await handle.execute_update(
             SupportAgentWorkflow.approve_purchase,
+            body.approvalId,
             ApprovalDecision(approved=body.approved, reason=body.reason),
         )
+    except WorkflowUpdateFailedError as e:
+        detail = getattr(e.cause, "message", None) or str(e.cause)
+        raise HTTPException(status_code=409, detail=detail) from e
     except RPCError as e:
         _not_found(e)
     return {}

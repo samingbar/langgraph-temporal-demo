@@ -18,7 +18,16 @@ def main() -> None:
     conversation_id = sys.argv[1]
     approved = "--reject" not in sys.argv
     api_url = _arg_value("--api", "http://localhost:8001").rstrip("/")
-    payload = json.dumps({"approved": approved}).encode()
+    try:
+        with urlopen(f"{api_url}/conversations/{conversation_id}/pending-approval") as response:
+            pending = json.loads(response.read()).get("pending")
+    except HTTPError as e:
+        detail = json.loads(e.read() or b"{}").get("error", e.reason)
+        sys.exit(f"could not load pending approval: {detail}")
+    if not pending:
+        sys.exit("no purchase approval is pending")
+
+    payload = json.dumps({"approvalId": pending["approvalId"], "approved": approved}).encode()
     request = Request(
         f"{api_url}/conversations/{conversation_id}/approve",
         data=payload,

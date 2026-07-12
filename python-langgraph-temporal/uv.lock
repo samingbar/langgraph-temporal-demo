@@ -1062,6 +1062,21 @@ wheels = [
 ]
 
 [[package]]
+name = "support-agent-common"
+version = "0.1.0"
+source = { editable = "../support-agent-common" }
+dependencies = [
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.9" },
+]
+
+[[package]]
 name = "support-agent-temporal-langgraph"
 version = "0.1.0"
 source = { virtual = "." }
@@ -1076,6 +1091,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "support-agent-common" },
     { name = "temporalio", extra = ["langgraph"] },
     { name = "uvicorn" },
 ]
@@ -1092,6 +1108,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "support-agent-common", editable = "../support-agent-common" },
     { name = "temporalio", extras = ["langgraph"], specifier = ">=1.27" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]

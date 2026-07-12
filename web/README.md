@@ -21,7 +21,9 @@ http://localhost:5173?backend=temporal-langgraph
 http://localhost:5173?backend=langgraph
 ```
 
-To change ports or labels, edit the matching entry in `config.js`.
+For local static development, change ports or labels by editing the matching
+entry in `config.js`. In the frontend Docker image, `config.js` is generated
+from environment variables at container startup.
 
 ## Run it
 
@@ -41,14 +43,14 @@ Standalone LangGraph app:
 
 ```bash
 cd ../python-langgraph
-uv run uvicorn api:app --port 8001
+uv run python -m uvicorn api:app --port 8001
 ```
 
 Original Temporal workflow gateway:
 
 ```bash
 cd ../python
-uv run uvicorn api:app --port 8000
+uv run python -m uvicorn api:app --port 8000
 ```
 
 For the original Temporal workflow gateway, also run the Temporal server and worker
@@ -61,14 +63,14 @@ temporal server start-dev --ui-port 8233
 
 ```bash
 cd ../python
-uv run worker.py
+uv run python worker.py
 ```
 
 Temporal + LangGraph workflow gateway:
 
 ```bash
 cd ../python-langgraph-temporal
-uv run uvicorn api:app --port 8002
+uv run python -m uvicorn api:app --port 8002
 ```
 
 For the Temporal + LangGraph gateway, also run the Temporal server and its
@@ -81,7 +83,7 @@ temporal server start-dev --ui-port 8233
 
 ```bash
 cd ../python-langgraph-temporal
-uv run worker.py
+uv run python worker.py
 ```
 
 The `temporal-langgraph` preset expects this gateway to listen on
@@ -137,6 +139,46 @@ python3 -m http.server 5174
 
 If you use another web port, backend selection still works the same way with the
 start-screen selector or `?backend=...` query string.
+
+## Demo access token
+
+Public deployments can require `DEMO_ACCESS_TOKEN` at the API. Open the UI with
+the token once and it will be kept only for the current browser session:
+
+```text
+http://localhost:5173?backend=temporal-langgraph&token=<token>
+```
+
+The UI removes the token from the address bar immediately and sends it as
+`X-Demo-Token`. Set `DEMO_AUTH_REQUIRED=true` on the API to make a missing token
+a startup error in public environments.
+
+## Frontend Docker image
+
+Build from the repository root:
+
+```bash
+docker build -f docker/frontend.Dockerfile -t langgraph-temporal-demo-web .
+```
+
+Run locally:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e WEB_PORT=8080 \
+  -e DEFAULT_AGENT_BACKEND=temporal-langgraph \
+  -e TEMPORAL_LANGGRAPH_BACKEND_URL=http://localhost:8002 \
+  langgraph-temporal-demo-web
+```
+
+The container accepts:
+
+- `WEB_PORT`
+- `DEFAULT_AGENT_BACKEND`
+- `TEMPORAL_BACKEND_URL`
+- `LANGGRAPH_BACKEND_URL`
+- `TEMPORAL_LANGGRAPH_BACKEND_URL`
+- `TEMPORAL_UI_URL`
 
 ## Develop against the stub (no Temporal, no LLM, no DB)
 

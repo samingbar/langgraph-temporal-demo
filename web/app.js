@@ -3,11 +3,12 @@
 
 const $ = (id) => document.getElementById(id);
 const BACKEND_STORAGE_KEY = 'support-agent.backend';
+const TOKEN_STORAGE_KEY = 'support-agent.demoToken';
 
 let conversationId = null;
-let assistantCount = 0; // assistant messages rendered from the server transcript
 let activeBackendId = null;
 let activeBackend = null;
+let approvalPending = false;
 
 const FALLBACK_BACKENDS = {
   langgraph: {
@@ -68,6 +69,35 @@ function storageSet(key, value) {
   }
 }
 
+function tokenStorageGet() {
+  try {
+    return window.sessionStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function tokenStorageSet(value) {
+  try {
+    window.sessionStorage.setItem(TOKEN_STORAGE_KEY, value);
+  } catch {
+    // Ignore private-window or file:// storage failures.
+  }
+}
+
+function demoToken() {
+  const url = new URL(window.location.href);
+  const requested = url.searchParams.get('token') || url.searchParams.get('access_token');
+  if (requested) {
+    tokenStorageSet(requested);
+    url.searchParams.delete('token');
+    url.searchParams.delete('access_token');
+    window.history.replaceState(null, '', url);
+    return requested;
+  }
+  return tokenStorageGet() || '';
+}
+
 function initialBackendId() {
   const requested = new URLSearchParams(window.location.search).get('backend');
   const configured = window.DEFAULT_AGENT_BACKEND || window.DEFAULT_BACKEND;
@@ -92,13 +122,21 @@ function selectBackend(id, { persist = true, updateUrl = true } = {}) {
 
 // ── tiny fetch helper ────────────────────────────────────────────────────────
 async function call(method, path, body) {
+  const token = demoToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['X-Demo-Token'] = token;
+  }
   const res = await fetch(activeBackend.url + path, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      throw new Error('Demo access token required. Open the UI with ?token=<token>.');
+    }
     throw new Error(err.error || `${res.status} ${res.statusText}`);
   }
   return res.status === 204 ? {} : res.json();
@@ -167,30 +205,29 @@ function mdToHtml(md) {
 }
 
 // ── rendering ────────────────────────────────────────────────────────────────
-function addMsg(role, content, { counted = true } = {}) {
+function addMsg(role, content) {
   const div = document.createElement('div');
   div.className = `msg ${role}`;
   if (role === 'assistant') div.innerHTML = mdToHtml(content);
   else div.textContent = content;
   $('chat').appendChild(div);
   div.scrollIntoView({ behavior: 'smooth' });
-  if (role === 'assistant' && counted) assistantCount++;
   return div;
 }
 
 function renderTranscript(messages) {
   $('chat').querySelectorAll('.msg').forEach((el) => el.remove());
-  assistantCount = 0;
   for (const m of messages) addMsg(m.role, m.content);
 }
 
 function setBusy(busy, label) {
-  $('input').disabled = busy;
-  $('send').disabled = busy;
+  const composerDisabled = busy || approvalPending;
+  $('input').disabled = composerDisabled;
+  $('send').disabled = composerDisabled;
   const t = $('chat').querySelector('.typing');
   if (t) t.remove();
   if (busy) addMsg('assistant typing', label || 'thinking…');
-  else $('input').focus();
+  else if (!composerDisabled) $('input').focus();
 }
 
 function showError(message) {
@@ -245,8 +282,11 @@ function showConversationId(id) {
 
 // ── approval card (the HITL moment) ─────────────────────────────────────────
 function showApprovalCard(pending) {
+  approvalPending = true;
+  $('chat').querySelector('.approval-card')?.remove();
   const card = document.createElement('div');
   card.className = 'approval-card';
+  card.dataset.approvalId = pending.approvalId || '';
   card.innerHTML = `
     <div class="title">⏸ Purchase approval required</div>
     <div class="desc"></div>
@@ -261,6 +301,11 @@ function showApprovalCard(pending) {
 }
 
 async function decide(card, approved) {
+  const approvalId = card.dataset.approvalId;
+  if (!approvalId) {
+    showError('This approval request is missing an ID. Refresh the conversation and try again.');
+    return;
+  }
   card.querySelectorAll('button').forEach((b) => (b.disabled = true));
   try {
     // Baseline from the SERVER, not the client render count: multi-step turns
@@ -268,7 +313,7 @@ async function decide(card, approved) {
     // transcript that were never rendered here, so the client count lags.
     const { messages } = await call('GET', `/conversations/${conversationId}/transcript`);
     const baseline = messages.filter((m) => m.role === 'assistant').length;
-    await call('POST', `/conversations/${conversationId}/approve`, { approved });
+    await call('POST', `/conversations/${conversationId}/approve`, { approvalId, approved });
     card.remove();
     setBusy(true, approved ? 'completing purchase…' : 'cancelling…');
     await pollUntilSettled(baseline);
@@ -289,17 +334,19 @@ async function pollUntilSettled(baselineAssistant) {
     ]);
     if (pending) {
       renderTranscript(messages);
-      setBusy(false);
       showApprovalCard(pending);
+      setBusy(false);
       return;
     }
     const serverCount = messages.filter((m) => m.role === 'assistant').length;
     if (serverCount > baselineAssistant) {
       renderTranscript(messages);
+      approvalPending = false;
       setBusy(false);
       return;
     }
   }
+  approvalPending = false;
   setBusy(false);
   showError('Timed out waiting for the agent — check the backend.');
 }
@@ -314,12 +361,12 @@ $('composer').onsubmit = async (e) => {
   setBusy(true);
   try {
     const r = await call('POST', `/conversations/${conversationId}/messages`, { text });
-    setBusy(false);
     if (r.reply) addMsg('assistant', r.reply);
     if (r.status === 'awaiting_approval') {
       const { pending } = await call('GET', `/conversations/${conversationId}/pending-approval`);
       if (pending) showApprovalCard(pending);
     }
+    setBusy(false);
   } catch (err) {
     setBusy(false);
     showError(err.message);
@@ -337,8 +384,8 @@ $('start-form').onsubmit = async (e) => {
     showConversationId(id);
     $('start').remove();
     setBusy(false);
-    // client-side greeting only — not part of the server transcript, so not counted
-    addMsg('assistant', 'Hi! I can help you find music, check your orders, or buy tracks. What are you looking for?', { counted: false });
+    // client-side greeting only, not part of the server transcript.
+    addMsg('assistant', 'Hi! I can help you find music, check your orders, or buy tracks. What are you looking for?');
   } catch (err) {
     showError(err.message);
   }
@@ -346,3 +393,4 @@ $('start-form').onsubmit = async (e) => {
 
 selectBackend(initialBackendId(), { persist: false, updateUrl: false });
 setupBackendSelector();
+demoToken();

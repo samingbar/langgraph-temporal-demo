@@ -5,11 +5,11 @@
 """
 
 import asyncio
-import secrets
 import sys
 
 import config
 from models.types import TurnResult
+from support_agent_common.conversations import new_conversation_id
 from workflows.agent import SupportAgentWorkflow
 
 
@@ -20,7 +20,7 @@ async def main() -> None:
         conversation_id = sys.argv[1]
         handle = client.get_workflow_handle_for(SupportAgentWorkflow.run, conversation_id)
     else:
-        conversation_id = f"support-cli-{secrets.token_hex(2)}"
+        conversation_id = new_conversation_id("cli")
         handle = await client.start_workflow(
             SupportAgentWorkflow.run,
             "sa@temporal.io",

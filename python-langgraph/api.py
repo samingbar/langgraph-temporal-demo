@@ -6,8 +6,6 @@ replace ConversationStore with durable storage before scaling horizontally.
     uv run uvicorn api:app --port 8001
 """
 
-import re
-import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -16,8 +14,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from activities.llm import SimulatedOpenAIFailure
-from graph.agent import ConversationStore, NoPendingApprovalError, PendingApprovalError
+from graph.agent import (
+    ConversationStore,
+    NoPendingApprovalError,
+    PendingApprovalError,
+    StaleApprovalError,
+)
 from models.types import ApprovalDecision
+from support_agent_common.conversations import new_conversation_id
 
 
 @asynccontextmanager
@@ -46,6 +50,7 @@ class SendMessage(BaseModel):
 
 
 class Approve(BaseModel):
+    approvalId: str
     approved: bool
     reason: str | None = None
 
@@ -78,8 +83,7 @@ async def root():
 
 @app.post("/conversations", status_code=201)
 async def create_conversation(body: CreateConversation):
-    slug = re.sub(r"[^a-z0-9]+", "-", body.customerEmail.lower()).strip("-")
-    conversation_id = f"support-{slug}-{secrets.token_hex(2)}"
+    conversation_id = new_conversation_id(body.customerEmail)
     _store().create(conversation_id, body.customerEmail)
     return {"conversationId": conversation_id}
 
@@ -106,16 +110,23 @@ async def pending_approval(conversation_id: str):
     pending = _session(conversation_id).pending_approval()
     if pending is None:
         return {"pending": None}
-    return {"pending": {"trackIds": pending.track_ids, "description": pending.description}}
+    return {
+        "pending": {
+            "approvalId": pending.approval_id,
+            "trackIds": pending.track_ids,
+            "description": pending.description,
+        }
+    }
 
 
 @app.post("/conversations/{conversation_id}/approve", status_code=202)
 async def approve(conversation_id: str, body: Approve):
     try:
         result = await _session(conversation_id).approve_purchase(
+            body.approvalId,
             ApprovalDecision(approved=body.approved, reason=body.reason)
         )
-    except NoPendingApprovalError as e:
+    except (NoPendingApprovalError, StaleApprovalError) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except SimulatedOpenAIFailure as e:
         raise HTTPException(status_code=503, detail=str(e)) from e

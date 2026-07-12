@@ -46,7 +46,14 @@ class SupportAgentWorkflow:
         await workflow.wait_condition(lambda: self.state is not None)
         state = self._state()
         if self.turn_in_progress:
-            raise RuntimeError("a turn is already in progress")
+            await workflow.wait_condition(
+                lambda: not self.turn_in_progress
+                or (
+                    self.state is not None
+                    and self.state["pending_purchase"] is not None
+                )
+            )
+            state = self._state()
         if state["pending_purchase"] is not None:
             raise RuntimeError("purchase approval is still pending")
 
@@ -68,12 +75,17 @@ class SupportAgentWorkflow:
             return TurnResult(status="awaiting_approval", reply=reply)
         return TurnResult(status="reply", reply=reply)
 
-    @workflow.signal
-    def approve_purchase(self, decision: ApprovalDecision) -> None:
+    @workflow.update
+    def approve_purchase(
+        self, approval_id: str, decision: ApprovalDecision
+    ) -> None:
         if self.state is None:
-            return
-        if self.state["pending_purchase"] is None:
-            return
+            raise RuntimeError("workflow state is not initialized")
+        pending = _pending_purchase(self.state["pending_purchase"])
+        if pending is None:
+            raise RuntimeError("nothing pending")
+        if pending.approval_id != approval_id:
+            raise RuntimeError("approval request is stale")
         self.state = {
             **self.state,
             "approval": decision,
@@ -107,7 +119,6 @@ class SupportAgentWorkflow:
             if message.role == "assistant" and message.content:
                 return message.content
         return ""
-
 
 def _messages(values: list[ChatMessage | dict[str, Any]]) -> list[ChatMessage]:
     return [_message(value) for value in values]

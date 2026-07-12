@@ -1,6 +1,6 @@
 """The EXECUTE TOOLS step (slide 28, primitive 03): tool calls as an Activity.
 
-One dispatch over the 4 tools → the plain SQL functions in queries.py.
+One dispatch over the tool calls -> the plain SQL functions in db.py.
 Sync code (psycopg) — the worker runs it on a thread pool.
 
 Business errors (unknown customer, bad track IDs) return as model-visible

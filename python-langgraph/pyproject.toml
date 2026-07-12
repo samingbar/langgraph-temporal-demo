@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "LangGraph ReAct support agent"
 requires-python = ">=3.11"
 dependencies = [
+    "support-agent-common",
     "anthropic>=0.69",
     "openai>=1.60",
     "fastapi>=0.115",
@@ -15,5 +16,7 @@ dependencies = [
     "langchain-anthropic>=1.4.8",
     "langchain-openai>=1.3.3",
     "langgraph>=1.2.8",
-    "temporalio[langgraph]>=1.30.0",
 ]
+
+[tool.uv.sources]
+support-agent-common = { path = "../support-agent-common", editable = true }

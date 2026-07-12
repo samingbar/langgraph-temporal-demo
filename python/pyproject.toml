@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Durable agentic ReAct loop on Temporal — Python"
 requires-python = ">=3.11"
 dependencies = [
+    "support-agent-common",
     "temporalio>=1.14",
     "anthropic>=0.69",
     "openai>=1.60",
@@ -13,3 +14,6 @@ dependencies = [
     "pydantic>=2.9",
     "python-dotenv>=1.0",
 ]
+
+[tool.uv.sources]
+support-agent-common = { path = "../support-agent-common", editable = true }

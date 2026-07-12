@@ -1,4 +1,4 @@
-"""Optional CLI: approve or reject a pending purchase (sends the signal).
+"""Optional CLI: approve or reject a pending purchase atomically.
 
     uv run approve.py <conversation-id>            # approve
     uv run approve.py <conversation-id> --reject   # reject
@@ -20,10 +20,15 @@ async def main() -> None:
 
     client = await config.temporal_client()
     handle = client.get_workflow_handle_for(SupportAgentWorkflow.run, conversation_id)
-    await handle.signal(
-        SupportAgentWorkflow.approve_purchase, ApprovalDecision(approved=approved)
+    pending = await handle.query(SupportAgentWorkflow.pending_approval)
+    if pending is None:
+        sys.exit("no purchase approval is pending")
+    await handle.execute_update(
+        SupportAgentWorkflow.approve_purchase,
+        pending.approval_id,
+        ApprovalDecision(approved=approved),
     )
-    print(f"{'approved' if approved else 'rejected'} → signal sent to {conversation_id}")
+    print(f"{'approved' if approved else 'rejected'} → recorded for {conversation_id}")
 
 
 if __name__ == "__main__":
