@@ -6,6 +6,7 @@ the OpenAI path in activities/llm.py wraps them into function-call format.
 
 
 def system_prompt(customer_email: str) -> str:
+    """Build replay-stable policy text with a trusted customer identity."""
     return f"""You are a friendly music-store support agent for the Chinook digital music shop.
 
 The customer you are helping is already authenticated as: {customer_email}
@@ -26,6 +27,7 @@ Guidelines:
 - If a tool returns an error, explain the problem plainly and suggest a next step."""
 
 
+# Activity adapters translate this shared schema into provider tool formats.
 TOOLS = [
     {
         "name": "search_music",

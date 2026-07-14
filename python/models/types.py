@@ -1,3 +1,9 @@
+"""Provider-neutral state models persisted by the original Temporal workflow.
+
+Keeping provider SDK objects out of workflow state makes histories stable and
+lets the Anthropic and OpenAI adapters share the same orchestration code.
+"""
+
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -6,12 +12,14 @@ Role = Literal["system", "user", "assistant", "tool"]
 
 
 class ToolCall(BaseModel):
+    """One model-requested tool invocation with normalized JSON arguments."""
     id: str
     name: str
     args: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatMessage(BaseModel):
+    """Transcript item, including assistant calls and correlated tool output."""
     role: Role
     content: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)  # on role="assistant"
@@ -19,28 +27,34 @@ class ChatMessage(BaseModel):
 
 
 class LLMRequest(BaseModel):
+    """Complete conversation history supplied to a planning invocation."""
     messages: list[ChatMessage]
 
 
 class LLMResponse(BaseModel):
+    """Normalized assistant response returned by either model provider."""
     message: ChatMessage  # role="assistant"; tool_calls empty → final answer
 
 
 class ToolRequest(BaseModel):
+    """Tool call plus server-trusted customer identity from workflow state."""
     call: ToolCall
     customer_email: str
 
 
 class PendingPurchase(BaseModel):
+    """Purchase details exposed while the workflow waits for a human."""
     track_ids: list[int]
     description: str | None = None
 
 
 class ApprovalDecision(BaseModel):
+    """Human decision recorded atomically in agent state."""
     approved: bool
     reason: str | None = None
 
 
 class TurnResult(BaseModel):
+    """Turn outcome: a final reply or a pause at an approval boundary."""
     status: Literal["reply", "awaiting_approval"]
     reply: str

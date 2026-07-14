@@ -11,10 +11,12 @@ import config
 
 
 def _connect():
+    """Open a psycopg connection that returns column-addressable rows."""
     return psycopg.connect(config.DB_URL, row_factory=dict_row)
 
 
 def search_music(query: str) -> list[dict]:
+    """Search track, artist, and album text with a bound partial term."""
     sql = """
         SELECT t.track_id, t.name AS track, ar.name AS artist, al.title AS album,
                t.unit_price::float8 AS price
@@ -30,6 +32,7 @@ def search_music(query: str) -> list[dict]:
 
 
 def search_music_by_genre(genre: str) -> list[dict]:
+    """Run the catalog search using the supplied genre-like term."""
     sql = """
         SELECT t.track_id, t.name AS track, ar.name AS artist, al.title AS album,
                t.unit_price::float8 AS price
@@ -44,6 +47,7 @@ def search_music_by_genre(genre: str) -> list[dict]:
         return conn.execute(sql, {"q": f"%{genre}%"}).fetchall()
 
 def search_music_by_album(album: str) -> list[dict]:
+    """Run the catalog search using the supplied album term."""
     sql = """
         SELECT t.track_id, t.name AS track, ar.name AS artist, al.title AS album,
                t.unit_price::float8 AS price
@@ -58,6 +62,7 @@ def search_music_by_album(album: str) -> list[dict]:
         return conn.execute(sql, {"q": f"%{album}%"}).fetchall()
 
 def search_music_by_artist(artist: str) -> list[dict]:
+    """Run the catalog search using the supplied artist term."""
     sql = """
         SELECT t.track_id, t.name AS track, ar.name AS artist, al.title AS album,
                t.unit_price::float8 AS price
@@ -73,6 +78,7 @@ def search_music_by_artist(artist: str) -> list[dict]:
 
 
 def get_track_price(track_name: str) -> list[dict]:
+    """Return track and price candidates for a partial name."""
     sql = """
         SELECT t.track_id, t.name AS track, ar.name AS artist,
                t.unit_price::float8 AS price
@@ -88,6 +94,7 @@ def get_track_price(track_name: str) -> list[dict]:
 
 
 def get_customer_orders(email: str) -> list[dict]:
+    """List recent invoices for the workflow's trusted customer email."""
     sql = """
         SELECT i.invoice_id, i.invoice_date::date::text AS date,
                i.total::float8 AS total, count(l.invoice_line_id)::int AS track_count
@@ -104,6 +111,7 @@ def get_customer_orders(email: str) -> list[dict]:
 
 
 def get_order_details(order_id: int) -> list[dict]:
+    """Expand one invoice into tracks and their recorded prices."""
     sql = """
         SELECT t.track_id, t.name AS track, ar.name AS artist, al.title AS album,
                l.unit_price::float8 AS price, l.quantity
@@ -119,8 +127,11 @@ def get_order_details(order_id: int) -> list[dict]:
 
 
 def record_purchase(email: str, track_ids: list[int]) -> dict:
-    """The side effect: create an invoice + line items. Called only from an
-    activity, and only after human approval."""
+    """Create an invoice and line items atomically after human approval.
+
+    The connection context commits the complete purchase or rolls everything
+    back. Orchestration ensures this runs only after approval.
+    """
     with _connect() as conn:  # context manager wraps this in one transaction
         cust = conn.execute(
             """SELECT customer_id, address, city, state, country, postal_code
@@ -138,6 +149,8 @@ def record_purchase(email: str, track_ids: list[int]) -> dict:
             raise ValueError(f"No tracks found for IDs {track_ids}")
 
         total = sum(t["unit_price"] for t in tracks)
+        # Chinook uses application-assigned integer keys. This is adequate for
+        # the single-writer demo; production would normally use sequences.
         invoice_id = conn.execute(
             "SELECT coalesce(max(invoice_id), 0) + 1 AS id FROM invoice"
         ).fetchone()["id"]
