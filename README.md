@@ -1,9 +1,18 @@
-# LangGraph + Temporal Support-Agent Demo
+# LangGraph Temporal Demo
+
+Music-store support-agent demo showing durable agent execution, tool use, and
+human approval. The repository keeps three implementations for local
+comparison:
+
+- `python/` — original Temporal workflow.
+- `python-langgraph/` — standalone LangGraph.
+- `python-langgraph-temporal/` — Temporal-backed LangGraph, used by the
+  containerized production deployment.
 
 ## Run the demo
 
 Prerequisites: Docker, the [Temporal CLI](https://docs.temporal.io/cli), and
-[`uv`](https://docs.astral.sh/uv/). From the repository root:
+[`uv`](https://docs.astral.sh/uv/). Then, from the repository root:
 
 ```bash
 cp .env.example .env
@@ -11,77 +20,153 @@ cp .env.example .env
 make up
 ```
 
-Open the chat UI at <http://localhost:5173>. Use the start-screen selector to
-compare all three agent implementations. The Temporal UI is available at
-<http://localhost:8233> for the two durable variants.
+Open the chat at <http://localhost:5173> and choose an implementation. Open the
+Temporal UI at <http://localhost:8233> to watch workflow history while you
+chat. Useful commands:
 
 ```bash
-make status   # Show which services and local processes are running.
-make logs     # Tail Temporal, worker, API, and web logs.
+make status   # Show each local process and service.
+make logs     # Tail the backend, worker, web, and Temporal logs.
 make down     # Stop everything started by make up.
 ```
 
-To run one implementation instead of the full comparison stack:
+To run only one implementation, use `make original`, `make langgraph`, or
+`make temporal-langgraph`. The first and third variants demonstrate durable
+execution; try `make kill-worker`, continue/restart with `make worker`, and
+observe the conversation resume from persisted workflow state.
 
-```bash
-make original             # Original Temporal workflow
-make langgraph            # Standalone, in-memory LangGraph
-make temporal-langgraph   # LangGraph backed by a Temporal workflow
+## Deployment architecture
+
+The production stack keeps all three implementations available for comparison.
+The frontend is the only public component and routes each selector option to
+its corresponding internal API.
+
+```text
+Browser
+  |
+  | https://langgraph-temporal.tmprl-demo.cloud
+  v
+tmprl-demo.cloud ingress
+  `-- /* -> frontend (nginx/static UI)
+              |-- /api/temporal/* ----------> Temporal API ---> Temporal Cloud
+              |                                  ^
+              |                                  `--- Temporal worker ---> Postgres
+              |-- /api/langgraph/* ----------> LangGraph API ------------> Postgres
+              `-- /api/temporal-langgraph/* -> Temporal+LG API -> Temporal Cloud
+                                                     ^
+                                                     `--- Temporal+LG worker -> Postgres
 ```
 
-Try the durability demonstration with `make kill-worker`, then restart the
-corresponding worker with `make worker` or `make temporal-langgraph-worker`.
-The Temporal-backed conversation resumes from persisted workflow history.
+Kubernetes never runs a Temporal Server. The two Temporal APIs start, update,
+and query workflows in Temporal Cloud, while their independently restartable
+workers poll separate task queues. Standalone LangGraph keeps conversations in
+its single API replica. All three variants use the same seeded Postgres service.
 
-## What this repository demonstrates
+## Docker Compose
 
-The demo implements a music-store customer-support agent that searches a
-PostgreSQL copy of the Chinook catalog, reviews customer orders, and pauses for
-human approval before purchases. Three implementations share the same browser
-experience and HTTP contract:
-
-- `python/` — a hand-written Temporal workflow and Activities.
-- `python-langgraph/` — standalone LangGraph with process-local state.
-- `python-langgraph-temporal/` — LangGraph nodes executed through Temporal.
-- `web/` — dependency-free browser UI with backend selection and approval UI.
-- `db/` — Chinook schema, catalog data, and the seeded demo customer.
-
-## Demo controls
-
-The Makefile includes failure/recovery controls used during presentations:
+Compose runs the production-shaped frontend, backend, worker, and Postgres
+containers while using a Temporal dev server on the host:
 
 ```bash
-make kill-worker                     # Stop the original Temporal worker.
-make kill-temporal-langgraph-worker  # Stop the LangGraph + Temporal worker.
-make kill-db                         # Stop Postgres during a tool call.
-make db                              # Restart Postgres.
+cp .env.example .env
+temporal server start-dev --ui-port 8233
+make compose-up
 ```
 
-Stopping a worker demonstrates durable execution: the workflow remains in
-Temporal and continues when a compatible worker returns. Stopping the database
-demonstrates the difference between transient infrastructure failures and
-model-visible business errors.
+Open `http://localhost:5173`. Compose maps the backend to
+`http://localhost:8002`, but the browser uses same-origin `/api` through nginx.
+The containers reach the host Temporal server at
+`host.docker.internal:7233`. Stop the stack with `make compose-down`.
 
-## Configuration
+You can also use `docker compose up --build -d` directly.
+If a source-based process already owns a default port, override it with
+`COMPOSE_WEB_PORT`, `COMPOSE_API_PORT`, or `COMPOSE_POSTGRES_PORT`.
 
-Copy `.env.example` to `.env` and configure one supported model provider.
-Important variables include:
+## Runtime configuration
+
+Local defaults live in `.env.example`. Production configuration is declared in
+the `DemoProject` resource in `tmprl-demo-cloud-registry`. The platform injects
+Temporal Cloud values, while project-owned credentials are read from AWS
+Secrets Manager. The local `.env` is never uploaded by the deployment.
 
 | Variable | Purpose |
 | --- | --- |
-| `LLM_PROVIDER` | Select `anthropic` or `openai`. |
-| `ANTHROPIC_API_KEY` | Credential used by the Anthropic adapter. |
-| `OPENAI_API_KEY` | Credential used by the OpenAI adapter. |
-| `ANTHROPIC_MODEL` / `OPENAI_MODEL` | Override the provider's default model. |
-| `DB_URL` | Override the local Chinook PostgreSQL connection. |
-| `TEMPORAL_ADDRESS` | Override the local Temporal endpoint. |
-| `OPENAI_FAILURE_RATE` | Inject planning failures for retry demonstrations. |
+| `TEMPORAL_ADDRESS` | Temporal frontend endpoint, including port |
+| `TEMPORAL_NAMESPACE` | Temporal Cloud namespace ID |
+| `TEMPORAL_API_KEY` | Namespace-scoped Cloud API key; secret |
+| `TEMPORAL_TLS` | `true` in production |
+| `LANGGRAPH_TEMPORAL_TASK_QUEUE` | Shared backend/worker task queue |
+| `DB_URL` | PostgreSQL connection URL; secret |
+| `LLM_PROVIDER` | `anthropic` or `openai` |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Selected provider credential; secret |
+| `ANTHROPIC_MODEL` / `OPENAI_MODEL` | Selected provider model ID |
 
-Do not commit `.env`; it is intentionally ignored by Git.
+For OpenAI Sol, for example:
 
-## Manual operation and troubleshooting
+```env
+LLM_PROVIDER=openai
+OPENAI_MODEL=gpt-5.6-sol
+OPENAI_API_KEY=...
+```
 
-The one-command path is recommended. For individual frontend/backend commands,
-port overrides, and troubleshooting, see [web/README.md](web/README.md). Each
-Python implementation also contains a `starter.py` terminal client and an
-`approve.py` approval helper.
+No credentials are copied into images or committed manifests.
+
+## Container images
+
+Build for the Kubernetes target platform:
+
+```bash
+docker buildx build --platform linux/amd64 --load \
+  -f docker/temporal.Dockerfile -t langgraph-temporal-demo-temporal:local .
+docker buildx build --platform linux/amd64 --load \
+  -f docker/langgraph.Dockerfile -t langgraph-temporal-demo-langgraph:local .
+docker buildx build --platform linux/amd64 --load \
+  -f docker/backend.Dockerfile -t langgraph-temporal-demo-temporal-langgraph:local .
+docker buildx build --platform linux/amd64 --load \
+  -f docker/frontend.Dockerfile -t langgraph-temporal-demo-frontend:local .
+docker buildx build --platform linux/amd64 --load \
+  -f docker/postgres.Dockerfile -t langgraph-temporal-demo-postgres:local .
+```
+
+Each Temporal variant uses its API image for both the FastAPI component and its
+`python worker.py` component.
+
+## tmprl-demo.cloud deployment
+
+This repository owns application source and Dockerfiles only. Deployment is
+defined by one `DemoProject` resource in the private
+`tmprl-demo-cloud-registry` repository:
+
+```text
+projects/demo/langgraph-temporal.yaml
+```
+
+After that resource is merged, the registry operator builds five images, runs
+three APIs, two Temporal workers, frontend, and seeded Postgres as separate
+components, creates Temporal Cloud credentials, and publishes:
+
+```text
+https://langgraph-temporal.tmprl-demo.cloud
+```
+
+Before onboarding, the source repository must be available at
+`https://github.com/temporal-sa/langgraph-temporal-demo`. Create these JSON
+secrets in AWS Secrets Manager in the platform account and `us-west-1`:
+
+| Secret path | Required properties |
+| --- | --- |
+| `tmprl-dem-cld/langgraph-temporal/llm-credentials` | `OPENAI_API_KEY` |
+| `tmprl-dem-cld/langgraph-temporal/database` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DB_URL` |
+Temporal credentials are platform-owned and must not be added to these
+secrets. See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the onboarding sequence.
+
+## Validation
+
+```bash
+make test
+docker compose config --quiet
+
+# From the tmprl-demo-cloud-registry checkout after adding the DemoProject:
+uv run --isolated --with jsonschema --with pyyaml \
+  python scripts/validate_projects.py
+```
